@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { loadXLSX } from './xlsxLoader';
 
 /**
  * Parse file BukuBank dari Excel atau CSV.
@@ -14,7 +14,8 @@ import * as XLSX from 'xlsx';
  *  - Nama Penerima (biasanya kolom index 4)
  *  - Nominal (biasanya kolom index 5)
  */
-export function parseBukuBank(fileArrayBuffer) {
+export async function parseBukuBank(fileArrayBuffer) {
+  const XLSX = await loadXLSX();
   const workbook = XLSX.read(new Uint8Array(fileArrayBuffer), { type: 'array' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
@@ -80,7 +81,8 @@ export function parseBukuBank(fileArrayBuffer) {
  *      SALDO_AWAL | MUTASI_DEBET | MUTASI_KREDIT | ...
  *  - Baris data transaksi
  */
-export function parseDataQlola(fileArrayBuffer) {
+export async function parseDataQlola(fileArrayBuffer) {
+  const XLSX = await loadXLSX();
   const workbook = XLSX.read(new Uint8Array(fileArrayBuffer), { type: 'array' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];

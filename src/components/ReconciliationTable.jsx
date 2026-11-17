@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Download, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
+import { Search, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import { formatRupiah } from '../utils/normalizer';
 import { exportAllToExcel, exportBelumDiambilToExcel, exportPerluReviewToExcel, exportMatchedToExcel, exportToExcel, formatRowDateTime } from '../utils/exportReport';
 
@@ -34,31 +34,41 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function ReconciliationTable({ results, activeFilter }) {
+function ReconciliationTable({ results, activeFilter }) {
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
 
+  // Pencarian ditunda supaya mengetik tetap responsif untuk ribuan baris.
+  const deferredSearch = useDeferredValue(search);
+  const isFiltering = deferredSearch !== search;
+
+  // Precompute teks pencarian sekali per perubahan data, bukan setiap ketikan.
+  const indexed = useMemo(
+    () => results.map(row => ({
+      row,
+      haystack: [
+        row.deskripsi,
+        row.namaPenerima,
+        String(row.nominal),
+        formatRowDateTime(row.tanggal || row.qlRow?.tanggal, row.jamTran || row.qlRow?.jamTran),
+      ].join('\n').toLowerCase(),
+    })),
+    [results],
+  );
+
   // Filter by activeFilter tab + search
   const filtered = useMemo(() => {
-    return results
-      .filter(r => {
-        if (activeFilter === 'matched') return r.status === 'MATCHED';
-        if (activeFilter === 'review') return r.status === 'PERLU_REVIEW';
-        if (activeFilter === 'belum') return r.status === 'BELUM_DIAMBIL';
+    const q = deferredSearch.toLowerCase().trim();
+    return indexed
+      .filter(({ row }) => {
+        if (activeFilter === 'matched') return row.status === 'MATCHED';
+        if (activeFilter === 'review') return row.status === 'PERLU_REVIEW';
+        if (activeFilter === 'belum') return row.status === 'BELUM_DIAMBIL';
         return true; // 'all'
       })
-      .filter(r => {
-        const q = search.toLowerCase().trim();
-        if (!q) return true;
-        const tgl = formatRowDateTime(r.tanggal || r.qlRow?.tanggal, r.jamTran || r.qlRow?.jamTran).toLowerCase();
-        return (
-          r.deskripsi.toLowerCase().includes(q) ||
-          r.namaPenerima.toLowerCase().includes(q) ||
-          String(r.nominal).includes(q) ||
-          tgl.includes(q)
-        );
-      });
-  }, [results, activeFilter, search]);
+      .filter(({ haystack }) => !q || haystack.includes(q))
+      .map(({ row }) => row);
+  }, [indexed, activeFilter, deferredSearch]);
 
   const handleExport = () => {
     if (search.trim()) {
@@ -100,6 +110,7 @@ export default function ReconciliationTable({ results, activeFilter }) {
         <div className="flex items-center gap-2 justify-between sm:justify-start">
           <span className="text-xs text-slate-500 font-semibold">
             {filtered.length.toLocaleString('id-ID')} baris
+            {isFiltering && <span className="text-slate-400 font-normal"> · memfilter…</span>}
           </span>
           <button
             type="button"
@@ -223,3 +234,6 @@ export default function ReconciliationTable({ results, activeFilter }) {
     </div>
   );
 }
+
+export default React.memo(ReconciliationTable);
+

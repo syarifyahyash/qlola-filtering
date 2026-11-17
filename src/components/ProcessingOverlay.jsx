@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 /**
@@ -6,7 +6,20 @@ import { Loader2 } from 'lucide-react';
  * progress === null berarti indeterminate (mis. saat parsing file).
  */
 export default function ProcessingOverlay({ active, progress, label, detail }) {
-  if (!active) return null;
+  // Tahan overlay sebentar saat `active` berubah false, supaya tidak berkedip
+  // di jeda singkat antara selesai parsing dan mulai rekonsiliasi.
+  const [visible, setVisible] = useState(active);
+
+  useEffect(() => {
+    if (active) {
+      setVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => setVisible(false), 150);
+    return () => clearTimeout(timer);
+  }, [active]);
+
+  if (!visible) return null;
 
   const indeterminate = progress === null || progress === undefined;
   const finished = !indeterminate && progress >= 100;

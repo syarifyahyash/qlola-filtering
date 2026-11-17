@@ -327,22 +327,37 @@ export async function reconcileAsync(qlData, bbData, { onProgress, signal } = {}
 }
 
 function buildSummary(results) {
-  const matched = results.filter(r => r.status === 'MATCHED');
-  const needsReview = results.filter(r => r.status === 'PERLU_REVIEW');
-  const unmatched = results.filter(r => r.status === 'BELUM_DIAMBIL');
+  let matchedCount = 0;
+  let reviewCount = 0;
+  let unmatchedCount = 0;
+  let totalNominal = 0;
+  let matchedNominal = 0;
+  let reviewNominal = 0;
+  let unmatchedNominal = 0;
 
-  const totalNominal = results.reduce((s, r) => s + (r.nominal || 0), 0);
-  const matchedNominal = matched.reduce((s, r) => s + (r.nominal || 0), 0);
-  const reviewNominal = needsReview.reduce((s, r) => s + (r.nominal || 0), 0);
-  const unmatchedNominal = unmatched.reduce((s, r) => s + (r.nominal || 0), 0);
+  for (const r of results) {
+    const nominal = r.nominal || 0;
+    totalNominal += nominal;
 
-  const matchPct = results.length > 0 ? Math.round((matched.length / results.length) * 100) : 0;
+    if (r.status === 'MATCHED') {
+      matchedCount++;
+      matchedNominal += nominal;
+    } else if (r.status === 'PERLU_REVIEW') {
+      reviewCount++;
+      reviewNominal += nominal;
+    } else if (r.status === 'BELUM_DIAMBIL') {
+      unmatchedCount++;
+      unmatchedNominal += nominal;
+    }
+  }
+
+  const matchPct = results.length > 0 ? Math.round((matchedCount / results.length) * 100) : 0;
 
   return {
     totalTransaksi: results.length,
-    matched: matched.length,
-    perluReview: needsReview.length,
-    belumDiambil: unmatched.length,
+    matched: matchedCount,
+    perluReview: reviewCount,
+    belumDiambil: unmatchedCount,
     totalNominal,
     matchedNominal,
     reviewNominal,

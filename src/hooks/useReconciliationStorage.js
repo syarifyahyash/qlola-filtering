@@ -104,7 +104,7 @@ export function useReconciliationStorage() {
     setUploadError('');
     try {
       const buffer = await file.arrayBuffer();
-      const parsed = parseDataQlola(buffer);
+      const parsed = await parseDataQlola(buffer);
       setQlData(parsed);
     } catch (err) {
       setUploadError(`Gagal membaca DataQlola: ${err.message}`);
@@ -118,7 +118,7 @@ export function useReconciliationStorage() {
     setUploadError('');
     try {
       const buffer = await file.arrayBuffer();
-      const parsed = parseBukuBank(buffer);
+      const parsed = await parseBukuBank(buffer);
       setBbData(parsed);
     } catch (err) {
       setUploadError(`Gagal membaca BukuBank: ${err.message}`);
@@ -141,8 +141,9 @@ export function useReconciliationStorage() {
 
   const processing = {
     active: isLoading || isReconciling,
-    // null = belum ada persentase (mis. sedang membaca file)
-    progress: isReconciling ? progress : null,
+    // null = indeterminate (hanya saat membaca file); setelah rekonsiliasi
+    // selesai nilainya tetap 100 agar overlay yang masih linger tidak berkedip.
+    progress: isLoading ? null : progress,
     label: isLoading ? 'Membaca File...' : 'Mencocokkan Transaksi',
     detail: isReconciling
       ? `${processed.toLocaleString('id-ID')} / ${totalRows.toLocaleString('id-ID')} transaksi diproses`
@@ -159,9 +160,6 @@ export function useReconciliationStorage() {
     results,
     summary,
     processing,
-    matchedResults: results.filter(r => r.status === 'MATCHED'),
-    reviewResults: results.filter(r => r.status === 'PERLU_REVIEW'),
-    unmatchedResults: results.filter(r => r.status === 'BELUM_DIAMBIL'),
     handleUploadQlola,
     handleUploadBukuBank,
     clearAll,

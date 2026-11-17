@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { loadXLSX } from './xlsxLoader';
 
 /** =========================================================
  *  exportReport.js
@@ -256,9 +256,10 @@ function filterRecordsByMode(records, filterMode) {
 /** =========================================================
  *  Export ke Excel (.xlsx) sesuai format resmi
  * ========================================================= */
-export function exportToExcel(records, filterMode = 'belum', periodeText = '', sheetTitle = '') {
+export async function exportToExcel(records, filterMode = 'belum', periodeText = '', sheetTitle = '') {
+  const XLSX = await loadXLSX();
   const { filtered, reportTitle, modeLabel } = filterRecordsByMode(records, filterMode);
-  const dataToExport = filtered.length > 0 ? filtered : records;
+  const dataToExport = filtered;
 
   const periode = getPeriodeText(dataToExport, periodeText);
   const jamAkses = getJamAksesText();
@@ -338,22 +339,22 @@ export function exportToExcel(records, filterMode = 'belum', periodeText = '', s
 
 /** Shortcut export belum diklaim ke Excel */
 export function exportBelumDiambilToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'belum', periode, sheetTitle);
+  return exportToExcel(records, 'belum', periode, sheetTitle);
 }
 
 /** Shortcut export perlu review ke Excel */
 export function exportPerluReviewToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'review', periode, sheetTitle);
+  return exportToExcel(records, 'review', periode, sheetTitle);
 }
 
 /** Shortcut export matched/sudah diklaim ke Excel */
 export function exportMatchedToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'matched', periode, sheetTitle);
+  return exportToExcel(records, 'matched', periode, sheetTitle);
 }
 
 /** Shortcut export semua data ke Excel */
 export function exportAllToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'all', periode, sheetTitle);
+  return exportToExcel(records, 'all', periode, sheetTitle);
 }
 
 /** Print laporan */

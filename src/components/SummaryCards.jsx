@@ -2,7 +2,7 @@ import React from 'react';
 import { CheckCircle2, AlertTriangle, Clock, Layers, Wallet } from 'lucide-react';
 import { formatRupiah } from '../utils/normalizer';
 
-export default function SummaryCards({ summary }) {
+function SummaryCards({ summary }) {
   const {
     totalTransaksi,
     matched,
@@ -83,3 +83,6 @@ export default function SummaryCards({ summary }) {
     </div>
   );
 }
+
+export default React.memo(SummaryCards);
+
