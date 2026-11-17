@@ -3,6 +3,7 @@ import Navbar from './components/Navbar';
 import SummaryCards from './components/SummaryCards';
 import UploadSection from './components/UploadSection';
 import ReconciliationTable from './components/ReconciliationTable';
+import ProcessingOverlay from './components/ProcessingOverlay';
 import { useReconciliationStorage } from './hooks/useReconciliationStorage';
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
     uploadError,
     results,
     summary,
+    processing,
     handleUploadQlola,
     handleUploadBukuBank,
     clearAll,
@@ -28,6 +30,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased text-slate-800">
+      <ProcessingOverlay
+        active={processing.active}
+        progress={processing.progress}
+        label={processing.label}
+        detail={processing.detail}
+      />
+
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}

@@ -19,7 +19,57 @@ import { formatRupiah } from './normalizer';
  *    - >1 kecocokan di mana total nominalnya sama persis dengan QLola -> MATCHED (Transaksi Dibagi)
  *    - >1 kecocokan di mana total nominalnya tidak sama -> PERLU_REVIEW
  *    - Tidak ditemukan kecocokan sama sekali -> BELUM_DIAMBIL
+ *
+ * CATATAN PERFORMA:
+ * Proses untuk ribuan transaksi bisa memakan waktu beberapa detik. Karena itu
+ * reconcileAsync() memproses baris secara bertahap (chunked) dan mengembalikan
+ * kontrol ke browser secara berkala agar UI tidak "not responding".
+ * Deskripsi & core reference Buku Bank juga di-precompute sekali saja
+ * (bukan di-regex ulang untuk setiap pasangan QLola x Buku Bank).
  */
+
+/** Batas waktu kerja sebelum menyerahkan kontrol ke browser (ms). */
+const MAX_WORK_MS = 12;
+
+function now() {
+  return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+}
+
+/**
+ * Membuat fungsi "yield" yang mengembalikan kontrol ke event loop tanpa
+ * penundaan timer. setTimeout(0) dibatasi ~4ms (bahkan ~15ms di Windows),
+ * sehingga untuk ribuan baris MessageChannel jauh lebih cepat.
+ */
+function createYield() {
+  if (typeof MessageChannel === 'undefined') {
+    return {
+      yieldToUi: () => new Promise(resolve => setTimeout(resolve, 0)),
+      dispose: () => {},
+    };
+  }
+
+  const channel = new MessageChannel();
+  let pendingResolve = null;
+
+  channel.port1.onmessage = () => {
+    const resolve = pendingResolve;
+    pendingResolve = null;
+    resolve?.();
+  };
+
+  return {
+    yieldToUi: () => new Promise(resolve => {
+      pendingResolve = resolve;
+      channel.port2.postMessage(null);
+    }),
+    dispose: () => {
+      pendingResolve = null;
+      channel.port1.close();
+      channel.port2.close();
+    },
+  };
+}
+
 
 /**
  * Normalisasi string teks: hilangkan spasi berlebih, huruf besar semua.
@@ -56,12 +106,25 @@ function extractCoreRef(desc) {
 }
 
 /**
- * Periksa apakah deskripsi QLola dan deskripsi Buku Bank cocok.
+ * Siapkan entri Buku Bank sekali saja (normalisasi deskripsi + ekstraksi core ref).
  */
-function isDescMatch(qlDesc, bbRawDesc) {
-  const qlNorm = normalizeDesc(qlDesc);
-  const bbClean = extractBukuBankDesc(bbRawDesc);
-  const bbNorm = normalizeDesc(bbClean);
+function prepareBukuBank(bbData) {
+  return bbData.map(b => ({
+    ...b,
+    cleanDesc: extractBukuBankDesc(b.deskripsi),
+    normDesc: normalizeDesc(extractBukuBankDesc(b.deskripsi)),
+    coreRef: extractCoreRef(b.deskripsi),
+  }));
+}
+
+/**
+ * Periksa apakah deskripsi QLola dan entri Buku Bank cocok.
+ * @param {string} qlNorm - deskripsi QLola yang sudah dinormalisasi
+ * @param {string} qlRef - core reference QLola
+ * @param {{normDesc: string, coreRef: string}} bb - entri Buku Bank ter-precompute
+ */
+function isDescMatch(qlNorm, qlRef, bb) {
+  const bbNorm = bb.normDesc;
 
   if (!qlNorm || !bbNorm) return false;
 
@@ -79,9 +142,7 @@ function isDescMatch(qlDesc, bbRawDesc) {
   }
 
   // 4. Core reference ID match
-  const qlRef = extractCoreRef(qlDesc);
-  const bbRef = extractCoreRef(bbRawDesc);
-  if (qlRef && bbRef && qlRef === bbRef) {
+  if (qlRef && bb.coreRef && qlRef === bb.coreRef) {
     return true;
   }
 
@@ -89,7 +150,106 @@ function isDescMatch(qlDesc, bbRawDesc) {
 }
 
 /**
- * Jalankan proses rekonsiliasi.
+ * Bentuk satu baris hasil rekonsiliasi untuk sebuah transaksi QLola.
+ */
+function reconcileRow(qlRow, idx, preparedBB) {
+  const qlDesc = qlRow.deskripsi;
+  const qlNom = qlRow.nominal;
+  const qlNorm = normalizeDesc(qlDesc);
+  const qlRef = extractCoreRef(qlDesc);
+
+  // Cari semua baris Buku Bank yang cocok secara deskripsi
+  const matches = preparedBB.filter(bb => isDescMatch(qlNorm, qlRef, bb));
+
+  if (matches.length === 0) {
+    // Tidak ditemukan kecocokan sama sekali di Buku Bank
+    return {
+      id: `REC-${idx + 1}`,
+      qlRow,
+      tanggal: qlRow.tanggal,
+      jamTran: qlRow.jamTran,
+      bbMatches: [],
+      status: 'BELUM_DIAMBIL',
+      statusLabel: 'Belum Diambil',
+      namaPenerima: '-',
+      nominal: qlNom,
+      deskripsi: qlDesc,
+    };
+  }
+
+  if (matches.length === 1) {
+    const matched = matches[0];
+    if (matched.nominal === qlNom) {
+      // Tepat 1 kecocokan dengan nominal persis sama -> MATCHED
+      return {
+        id: `REC-${idx + 1}`,
+        qlRow,
+        tanggal: qlRow.tanggal,
+        jamTran: qlRow.jamTran,
+        bbMatches: matches,
+        status: 'MATCHED',
+        statusLabel: 'Cocok',
+        namaPenerima: matched.namaPenerima || '(Nama kosong di Buku Bank)',
+        nominal: qlNom,
+        deskripsi: qlDesc,
+      };
+    }
+
+    // Deskripsi cocok tapi nominal berbeda
+    return {
+      id: `REC-${idx + 1}`,
+      qlRow,
+      tanggal: qlRow.tanggal,
+      jamTran: qlRow.jamTran,
+      bbMatches: matches,
+      status: 'PERLU_REVIEW',
+      statusLabel: 'Perlu Review',
+      namaPenerima: `${matched.namaPenerima} (Nominal BB: ${formatRupiah(matched.nominal)})`,
+      nominal: qlNom,
+      deskripsi: qlDesc,
+    };
+  }
+
+  // matches.length > 1 (Lebih dari 1 voucher Buku Bank)
+  const sumNominalBB = matches.reduce((s, m) => s + (m.nominal || 0), 0);
+
+  if (sumNominalBB === qlNom) {
+    // Transaksi dibagi (split), total nominal cocok persis -> MATCHED
+    const penerimaList = matches
+      .map(m => `${m.namaPenerima} (${formatRupiah(m.nominal)})`)
+      .join(' + ');
+
+    return {
+      id: `REC-${idx + 1}`,
+      qlRow,
+      tanggal: qlRow.tanggal,
+      jamTran: qlRow.jamTran,
+      bbMatches: matches,
+      status: 'MATCHED',
+      statusLabel: 'Cocok (Dibagi)',
+      namaPenerima: penerimaList,
+      nominal: qlNom,
+      deskripsi: qlDesc,
+    };
+  }
+
+  // Jika sum nominal tidak sama dengan mutasi QLola
+  return {
+    id: `REC-${idx + 1}`,
+    qlRow,
+    tanggal: qlRow.tanggal,
+    jamTran: qlRow.jamTran,
+    bbMatches: matches,
+    status: 'PERLU_REVIEW',
+    statusLabel: 'Perlu Review',
+    namaPenerima: matches.map(m => `${m.namaPenerima} (${formatRupiah(m.nominal)})`).join(' | '),
+    nominal: qlNom,
+    deskripsi: qlDesc,
+  };
+}
+
+/**
+ * Jalankan proses rekonsiliasi secara sinkron.
  * @param {Array} qlData - Hasil parseDataQlola()
  * @param {Array} bbData - Hasil parseBukuBank()
  * @returns {{ results: Array, summary: Object }}
@@ -102,107 +262,63 @@ export function reconcile(qlData, bbData) {
     };
   }
 
-  // Siapkan entri Buku Bank
-  const preparedBB = bbData.map(b => ({
-    ...b,
-    cleanDesc: extractBukuBankDesc(b.deskripsi),
-    normDesc: normalizeDesc(extractBukuBankDesc(b.deskripsi)),
-    coreRef: extractCoreRef(b.deskripsi),
-  }));
+  const preparedBB = prepareBukuBank(bbData);
+  const results = qlData.map((qlRow, idx) => reconcileRow(qlRow, idx, preparedBB));
 
-  const results = qlData.map((qlRow, idx) => {
-    const qlDesc = qlRow.deskripsi;
-    const qlNom = qlRow.nominal;
+  return {
+    results,
+    summary: buildSummary(results),
+  };
+}
 
-    // Cari semua baris Buku Bank yang cocok secara deskripsi
-    const matches = preparedBB.filter(bb => isDescMatch(qlDesc, bb.deskripsi));
+/**
+ * Versi asinkron dari reconcile() untuk dataset besar.
+ * Memproses baris per baris dan secara berkala "yield" ke event loop
+ * supaya browser tetap responsif, sambil melaporkan progres.
+ *
+ * @param {Array} qlData - Hasil parseDataQlola()
+ * @param {Array} bbData - Hasil parseBukuBank()
+ * @param {{ onProgress?: (percent: number, processed: number, total: number) => void, signal?: AbortSignal }} options
+ * @returns {Promise<{ results: Array, summary: Object }>}
+ */
+export async function reconcileAsync(qlData, bbData, { onProgress, signal } = {}) {
+  if (!qlData?.length || !bbData?.length) {
+    return {
+      results: [],
+      summary: buildSummary([]),
+    };
+  }
 
-    if (matches.length === 0) {
-      // Tidak ditemukan kecocokan sama sekali di Buku Bank
-      return {
-        id: `REC-${idx + 1}`,
-        qlRow,
-        tanggal: qlRow.tanggal,
-        jamTran: qlRow.jamTran,
-        bbMatches: [],
-        status: 'BELUM_DIAMBIL',
-        statusLabel: 'Belum Diambil',
-        namaPenerima: '-',
-        nominal: qlNom,
-        deskripsi: qlDesc,
-      };
-    }
+  const preparedBB = prepareBukuBank(bbData);
+  const total = qlData.length;
+  const results = new Array(total);
+  const yielder = createYield();
 
-    if (matches.length === 1) {
-      const matched = matches[0];
-      if (matched.nominal === qlNom) {
-        // Tepat 1 kecocokan dengan nominal persis sama -> MATCHED
-        return {
-          id: `REC-${idx + 1}`,
-          qlRow,
-          tanggal: qlRow.tanggal,
-          jamTran: qlRow.jamTran,
-          bbMatches: matches,
-          status: 'MATCHED',
-          statusLabel: 'Cocok',
-          namaPenerima: matched.namaPenerima || '(Nama kosong di Buku Bank)',
-          nominal: qlNom,
-          deskripsi: qlDesc,
-        };
+  onProgress?.(0, 0, total);
+
+  try {
+    let lastYield = now();
+    for (let i = 0; i < total; i++) {
+      if (signal?.aborted) {
+        const err = new Error('Rekonsiliasi dibatalkan');
+        err.name = 'AbortError';
+        throw err;
       }
 
-      // Deskripsi cocok tapi nominal berbeda
-      return {
-        id: `REC-${idx + 1}`,
-        qlRow,
-        tanggal: qlRow.tanggal,
-        jamTran: qlRow.jamTran,
-        bbMatches: matches,
-        status: 'PERLU_REVIEW',
-        statusLabel: 'Perlu Review',
-        namaPenerima: `${matched.namaPenerima} (Nominal BB: ${formatRupiah(matched.nominal)})`,
-        nominal: qlNom,
-        deskripsi: qlDesc,
-      };
+      results[i] = reconcileRow(qlData[i], i, preparedBB);
+
+      const isLast = i === total - 1;
+      if (isLast || now() - lastYield >= MAX_WORK_MS) {
+        onProgress?.(Math.round(((i + 1) / total) * 100), i + 1, total);
+
+        // Beri kesempatan browser melukis ulang UI / memproses input
+        await yielder.yieldToUi();
+        lastYield = now();
+      }
     }
-
-    // matches.length > 1 (Lebih dari 1 voucher Buku Bank)
-    const sumNominalBB = matches.reduce((s, m) => s + (m.nominal || 0), 0);
-
-    if (sumNominalBB === qlNom) {
-      // Transaksi dibagi (split), total nominal cocok persis -> MATCHED
-      const penerimaList = matches
-        .map(m => `${m.namaPenerima} (${formatRupiah(m.nominal)})`)
-        .join(' + ');
-
-      return {
-        id: `REC-${idx + 1}`,
-        qlRow,
-        tanggal: qlRow.tanggal,
-        jamTran: qlRow.jamTran,
-        bbMatches: matches,
-        status: 'MATCHED',
-        statusLabel: 'Cocok (Dibagi)',
-        namaPenerima: penerimaList,
-        nominal: qlNom,
-        deskripsi: qlDesc,
-      };
-    }
-
-    // Jika sum nominal tidak sama dengan mutasi QLola
-    return {
-      id: `REC-${idx + 1}`,
-      qlRow,
-      tanggal: qlRow.tanggal,
-      jamTran: qlRow.jamTran,
-      bbMatches: matches,
-      status: 'PERLU_REVIEW',
-      statusLabel: 'Perlu Review',
-      namaPenerima: matches.map(m => `${m.namaPenerima} (${formatRupiah(m.nominal)})`).join(' | '),
-      nominal: qlNom,
-      deskripsi: qlDesc,
-    };
-  });
+  } finally {
+    yielder.dispose();
+  }
 
   return {
     results,
