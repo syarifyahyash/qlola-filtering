@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Download, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Download, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp, FileSpreadsheet } from 'lucide-react';
 import { formatRupiah } from '../utils/normalizer';
-import { exportAllToCSV, exportBelumDiambilToCSV, exportPerluReviewToCSV, exportMatchedToCSV, exportToCSV, formatRowDateTime } from '../utils/exportReport';
+import { exportAllToExcel, exportBelumDiambilToExcel, exportPerluReviewToExcel, exportMatchedToExcel, exportToExcel, formatRowDateTime } from '../utils/exportReport';
 
 const STATUS_CONFIG = {
   MATCHED: {
@@ -62,12 +62,12 @@ export default function ReconciliationTable({ results, activeFilter }) {
 
   const handleExport = () => {
     if (search.trim()) {
-      return exportToCSV(filtered, activeFilter);
+      return exportToExcel(filtered, activeFilter);
     }
-    if (activeFilter === 'belum') return exportBelumDiambilToCSV(results);
-    if (activeFilter === 'review') return exportPerluReviewToCSV(results);
-    if (activeFilter === 'matched') return exportMatchedToCSV(results);
-    return exportAllToCSV(results);
+    if (activeFilter === 'belum') return exportBelumDiambilToExcel(results);
+    if (activeFilter === 'review') return exportPerluReviewToExcel(results);
+    if (activeFilter === 'matched') return exportMatchedToExcel(results);
+    return exportAllToExcel(results);
   };
 
   if (results.length === 0) {
@@ -104,10 +104,10 @@ export default function ReconciliationTable({ results, activeFilter }) {
           <button
             type="button"
             onClick={handleExport}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors shadow-xs"
           >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Export Excel
           </button>
         </div>
       </div>

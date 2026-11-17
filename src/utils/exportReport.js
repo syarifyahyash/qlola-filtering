@@ -2,16 +2,16 @@ import * as XLSX from 'xlsx';
 
 /** =========================================================
  *  exportReport.js
- *  Mengekspor hasil rekonsiliasi ke file CSV dan Excel (.xlsx)
+ *  Mengekspor hasil rekonsiliasi ke file Excel (.xlsx) dan CSV
  *  mengikuti format laporan resmi:
  * 
- *  Row 1: DAFTAR MUTASI QLOLA YANG BELUM DIKLAIM,,,,
- *  Row 2: TANGGAL 1 OKTOBER - 31 OKTOBER,,,,
- *  Row 3: Diakses pada Jam  18:30 WIB,,,,
- *  Row 4: NO,TGL,DARI/TUJUAN,MUTASI,DIAMBIL OLEH
- *  Row 5: ,,,MASUK,
- *  Row 6+: 1,2026-10-01 05:46:25,Deskripsi...,50000,
- *  Row Last: TOTAL,,,4007000,
+ *  Row 1: DAFTAR MUTASI QLOLA YANG BELUM DIKLAIM
+ *  Row 2: TANGGAL 1 OKTOBER - 31 OKTOBER
+ *  Row 3: Diakses pada Jam  18:30 WIB
+ *  Row 4: NO | TGL | DARI/TUJUAN | MUTASI | DIAMBIL OLEH
+ *  Row 5:    |     |             | MASUK  |
+ *  Row 6+: 1 | 2026-10-01 05:46:25 | Deskripsi... | 50000 | Nama Penerima
+ *  Row Last: TOTAL (merge A:C) | Total Nominal |
  * ========================================================= */
 
 const NAMA_BULAN = [
@@ -131,6 +131,35 @@ export function formatRowDateTime(tanggal, jamTran) {
 }
 
 /**
+ * Mengambil nama bulan dan tahun transaksi dari records
+ */
+function getBulanTahun(records) {
+  for (const r of records) {
+    const tgl = r.tanggal || r.qlRow?.tanggal;
+    if (!tgl) continue;
+    let d = null;
+    if (typeof tgl === 'number' || (!isNaN(Number(tgl)) && String(tgl).trim() !== '')) {
+      const ms = Math.round((Number(tgl) - 25569) * 86400000);
+      d = new Date(ms);
+    } else if (tgl instanceof Date) {
+      d = tgl;
+    } else if (typeof tgl === 'string') {
+      const match = tgl.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+      if (match) {
+        d = new Date(Date.UTC(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10)));
+      }
+    }
+    if (d && !isNaN(d.getTime())) {
+      const bulan = NAMA_BULAN[d.getUTCMonth()];
+      const tahun = d.getUTCFullYear();
+      return { bulan, tahun };
+    }
+  }
+  const now = new Date();
+  return { bulan: NAMA_BULAN[now.getMonth()], tahun: now.getFullYear() };
+}
+
+/**
  * Otomatis mengambil periode tanggal dari data transaksi,
  * contoh: "TANGGAL 1 OKTOBER - 31 OKTOBER"
  */
@@ -193,19 +222,6 @@ function getJamAksesText() {
 }
 
 /**
- * Standar escape untuk sel CSV.
- * Jika mengandung koma, kutip ganda, atau enter, bungkus dalam kutip ganda.
- */
-function escapeCSV(val) {
-  if (val === null || val === undefined) return '';
-  const str = String(val);
-  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-/**
  * Filter data rekonsiliasi sesuai mode
  */
 function filterRecordsByMode(records, filterMode) {
@@ -237,92 +253,19 @@ function filterRecordsByMode(records, filterMode) {
   };
 }
 
-/**
- * Download file teks/CSV ke browser dengan UTF-8 BOM
- */
-function downloadCSV(content, filename) {
-  const blob = new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-/**
- * Export rekonsiliasi ke CSV persis sesuai format contoh
- */
-export function exportToCSV(records, filterMode = 'belum', periodeText = '') {
-  // Jika records sudah difilter di luar tapi filterMode ditentukan
-  const { filtered, reportTitle, modeLabel } = filterRecordsByMode(records, filterMode);
-
-  // Jika records yang dipass sudah terfilter dari luar dan mode matching persis
-  const dataToExport = filtered.length > 0 ? filtered : records;
-
-  const title = reportTitle;
-  const periode = getPeriodeText(dataToExport, periodeText);
-  const jamAkses = getJamAksesText();
-
-  // Header 5 baris
-  const line1 = `${title},,,,`;
-  const line2 = `${periode},,,,`;
-  const line3 = `${jamAkses},,,,`;
-  const line4 = 'NO,TGL,DARI/TUJUAN,MUTASI,DIAMBIL OLEH';
-  const line5 = ',,,MASUK,';
-
-  // Baris data
-  const dataLines = dataToExport.map((item, idx) => {
-    const no = idx + 1;
-    const tgl = formatRowDateTime(item.tanggal || item.qlRow?.tanggal, item.jamTran || item.qlRow?.jamTran);
-    const deskripsi = escapeCSV(item.deskripsi || item.qlRow?.deskripsi || '');
-    const mutasi = item.nominal ?? item.qlRow?.nominal ?? 0;
-    const diambilOleh = escapeCSV((item.namaPenerima && item.namaPenerima !== '-') ? item.namaPenerima : '');
-
-    return [no, tgl, deskripsi, mutasi, diambilOleh].join(',');
-  });
-
-  // Baris TOTAL
-  const totalNominal = dataToExport.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-  const totalLine = ['TOTAL', '', '', totalNominal, ''].join(',');
-
-  const allContent = [line1, line2, line3, line4, line5, ...dataLines, totalLine].join('\r\n') + '\r\n';
-
-  const ts = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  downloadCSV(allContent, `Rekap_QLola_${modeLabel}_${ts}.csv`);
-}
-
-/** Shortcut export belum diklaim */
-export function exportBelumDiambilToCSV(records, periode) {
-  exportToCSV(records, 'belum', periode);
-}
-
-/** Shortcut export perlu review */
-export function exportPerluReviewToCSV(records, periode) {
-  exportToCSV(records, 'review', periode);
-}
-
-/** Shortcut export matched/sudah diklaim */
-export function exportMatchedToCSV(records, periode) {
-  exportToCSV(records, 'matched', periode);
-}
-
-/** Shortcut export semua data */
-export function exportAllToCSV(records, periode) {
-  exportToCSV(records, 'all', periode);
-}
-
 /** =========================================================
- *  Export ke Excel (.xlsx) dengan struktur baris yang sama
+ *  Export ke Excel (.xlsx) sesuai format resmi
  * ========================================================= */
-export function exportToExcel(records, filterMode = 'belum', periodeText = '', sheetTitle = 'REKAP QLOLA') {
+export function exportToExcel(records, filterMode = 'belum', periodeText = '', sheetTitle = '') {
   const { filtered, reportTitle, modeLabel } = filterRecordsByMode(records, filterMode);
   const dataToExport = filtered.length > 0 ? filtered : records;
 
   const periode = getPeriodeText(dataToExport, periodeText);
   const jamAkses = getJamAksesText();
+  const { bulan, tahun } = getBulanTahun(dataToExport);
+
+  // Jika sheetTitle tidak diberikan, default ke "REKAP QLOLA <BULAN> <TAHUN>"
+  const dynamicSheetTitle = sheetTitle || `REKAP QLOLA ${bulan} ${tahun}`;
 
   const headerRows = [
     [reportTitle, '', '', '', ''],
@@ -366,8 +309,8 @@ export function exportToExcel(records, filterMode = 'belum', periodeText = '', s
     { wch: 6 },   // A: NO
     { wch: 22 },  // B: TGL
     { wch: 75 },  // C: DARI/TUJUAN
-    { wch: 16 },  // D: MUTASI
-    { wch: 40 },  // E: DIAMBIL OLEH
+    { wch: 18 },  // D: MUTASI
+    { wch: 45 },  // E: DIAMBIL OLEH
   ];
 
   // Format kolom D (MUTASI) dan TOTAL sebagai angka ribuan
@@ -387,26 +330,30 @@ export function exportToExcel(records, filterMode = 'belum', periodeText = '', s
   }
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetTitle.substring(0, 31));
+  XLSX.utils.book_append_sheet(wb, ws, dynamicSheetTitle.substring(0, 31));
 
   const ts = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  XLSX.writeFile(wb, `Rekap_QLola_${modeLabel}_${ts}.xlsx`);
+  XLSX.writeFile(wb, `Rekap_QLola_${modeLabel}_${bulan}_${tahun}_${ts}.xlsx`);
 }
 
+/** Shortcut export belum diklaim ke Excel */
 export function exportBelumDiambilToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'belum', periode, sheetTitle || 'REKAP QLOLA BELUM DIKLAIM');
+  exportToExcel(records, 'belum', periode, sheetTitle);
 }
 
+/** Shortcut export perlu review ke Excel */
 export function exportPerluReviewToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'review', periode, sheetTitle || 'REKAP QLOLA PERLU REVIEW');
+  exportToExcel(records, 'review', periode, sheetTitle);
 }
 
+/** Shortcut export matched/sudah diklaim ke Excel */
 export function exportMatchedToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'matched', periode, sheetTitle || 'REKAP QLOLA SUDAH DIKLAIM');
+  exportToExcel(records, 'matched', periode, sheetTitle);
 }
 
+/** Shortcut export semua data ke Excel */
 export function exportAllToExcel(records, periode, sheetTitle) {
-  exportToExcel(records, 'all', periode, sheetTitle || 'REKAP QLOLA LENGKAP');
+  exportToExcel(records, 'all', periode, sheetTitle);
 }
 
 /** Print laporan */
