@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Download, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatRupiah } from '../utils/normalizer';
-import { exportAllToCSV, exportBelumDiambilToCSV, exportPerluReviewToCSV } from '../utils/exportReport';
+import { exportAllToCSV, exportBelumDiambilToCSV, exportPerluReviewToCSV, exportMatchedToCSV, exportToCSV } from '../utils/exportReport';
 
 const STATUS_CONFIG = {
   MATCHED: {
@@ -59,9 +59,13 @@ export default function ReconciliationTable({ results, activeFilter }) {
   }, [results, activeFilter, search]);
 
   const handleExport = () => {
+    if (search.trim()) {
+      return exportToCSV(filtered, activeFilter);
+    }
     if (activeFilter === 'belum') return exportBelumDiambilToCSV(results);
     if (activeFilter === 'review') return exportPerluReviewToCSV(results);
-    return exportAllToCSV(filtered);
+    if (activeFilter === 'matched') return exportMatchedToCSV(results);
+    return exportAllToCSV(results);
   };
 
   if (results.length === 0) {

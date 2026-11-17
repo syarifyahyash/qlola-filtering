@@ -52,7 +52,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
       {/* Upload Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* DataQlola */}
-        <input ref={qlRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleQlChange} />
+        <input ref={qlRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleQlChange} />
         <button
           type="button"
           onClick={() => qlRef.current?.click()}
@@ -77,7 +77,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
               </div>
               <div className="text-center">
                 <div className="font-bold text-slate-800 text-sm">Upload DataQlola</div>
-                <div className="text-xs text-slate-500 mt-1">File Excel (.xlsx / .xls)</div>
+                <div className="text-xs text-slate-500 mt-1">File Excel (.xlsx / .xls) atau .csv</div>
               </div>
               <div className="text-[11px] text-blue-500">Kolom J (Deskripsi) · Kolom M (Nominal)</div>
             </>
@@ -86,7 +86,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
         </button>
 
         {/* BukuBank */}
-        <input ref={bbRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBbChange} />
+        <input ref={bbRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleBbChange} />
         <button
           type="button"
           onClick={() => bbRef.current?.click()}
@@ -111,7 +111,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
               </div>
               <div className="text-center">
                 <div className="font-bold text-slate-800 text-sm">Upload Buku Bank</div>
-                <div className="text-xs text-slate-500 mt-1">File Excel (.xlsx / .xls)</div>
+                <div className="text-xs text-slate-500 mt-1">File Excel (.xlsx / .xls) atau .csv</div>
               </div>
               <div className="text-[11px] text-indigo-500">Kolom C (Deskripsi) · Kolom E (Nama) · Kolom F (Nominal)</div>
             </>
