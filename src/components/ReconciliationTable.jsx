@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Download, X, CheckCircle2, AlertTriangle, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { formatRupiah } from '../utils/normalizer';
-import { exportAllToCSV, exportBelumDiambilToCSV, exportPerluReviewToCSV, exportMatchedToCSV, exportToCSV } from '../utils/exportReport';
+import { exportAllToCSV, exportBelumDiambilToCSV, exportPerluReviewToCSV, exportMatchedToCSV, exportToCSV, formatRowDateTime } from '../utils/exportReport';
 
 const STATUS_CONFIG = {
   MATCHED: {
@@ -50,10 +50,12 @@ export default function ReconciliationTable({ results, activeFilter }) {
       .filter(r => {
         const q = search.toLowerCase().trim();
         if (!q) return true;
+        const tgl = formatRowDateTime(r.tanggal || r.qlRow?.tanggal, r.jamTran || r.qlRow?.jamTran).toLowerCase();
         return (
           r.deskripsi.toLowerCase().includes(q) ||
           r.namaPenerima.toLowerCase().includes(q) ||
-          String(r.nominal).includes(q)
+          String(r.nominal).includes(q) ||
+          tgl.includes(q)
         );
       });
   }, [results, activeFilter, search]);
@@ -117,6 +119,7 @@ export default function ReconciliationTable({ results, activeFilter }) {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
                 <th className="py-3 px-3 w-10 text-center">No</th>
+                <th className="py-3 px-3 min-w-[145px]">Tgl / Jam</th>
                 <th className="py-3 px-3 min-w-[260px]">Deskripsi QLola</th>
                 <th className="py-3 px-3 min-w-[120px] text-right">Nominal</th>
                 <th className="py-3 px-3 min-w-[200px]">Nama Penerima</th>
@@ -126,7 +129,7 @@ export default function ReconciliationTable({ results, activeFilter }) {
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-10 text-center text-slate-400 text-sm">
+                  <td colSpan={6} className="py-10 text-center text-slate-400 text-sm">
                     Tidak ada transaksi yang cocok dengan pencarian.
                   </td>
                 </tr>
@@ -142,6 +145,11 @@ export default function ReconciliationTable({ results, activeFilter }) {
                       >
                         {/* No */}
                         <td className="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+
+                        {/* Tanggal & Jam */}
+                        <td className="py-3 px-3 font-mono text-xs text-slate-600 whitespace-nowrap">
+                          {formatRowDateTime(item.tanggal || item.qlRow?.tanggal, item.jamTran || item.qlRow?.jamTran)}
+                        </td>
 
                         {/* Deskripsi */}
                         <td className="py-3 px-3">
@@ -180,7 +188,7 @@ export default function ReconciliationTable({ results, activeFilter }) {
                       {/* Expanded row: detail BukuBank matches */}
                       {isExpanded && (
                         <tr className="bg-slate-50/80">
-                          <td colSpan={5} className="px-6 py-4 border-t border-slate-200">
+                          <td colSpan={6} className="px-6 py-4 border-t border-slate-200">
                             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                               Detail Transaksi
                             </div>
