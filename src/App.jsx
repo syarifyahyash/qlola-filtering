@@ -10,6 +10,7 @@ export default function App() {
   const {
     qlData,
     bbData,
+    bwData,
     activeTab,
     setActiveTab,
     isLoading,
@@ -17,8 +18,12 @@ export default function App() {
     results,
     summary,
     processing,
+    canProcess,
+    hasProcessed,
     handleUploadQlola,
     handleUploadBukuBank,
+    handleUploadBlokWanita,
+    processReconciliation,
     clearAll,
   } = useReconciliationStorage();
 
@@ -27,6 +32,13 @@ export default function App() {
     : activeTab === 'review' ? 'review'
     : activeTab === 'belum' ? 'belum'
     : 'all';
+
+  // Proses manual: pindah ke tab hasil, overlay progres akan menutupi tabel
+  // sampai rekonsiliasi selesai.
+  const handleProcess = () => {
+    processReconciliation();
+    setActiveTab('matching');
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased text-slate-800">
@@ -55,9 +67,13 @@ export default function App() {
           <UploadSection
             qlData={qlData}
             bbData={bbData}
+            bwData={bwData}
             onUploadQlola={handleUploadQlola}
             onUploadBukuBank={handleUploadBukuBank}
-            onGoToResult={() => setActiveTab('matching')}
+            onUploadBlokWanita={handleUploadBlokWanita}
+            onProcess={handleProcess}
+            canProcess={canProcess}
+            hasProcessed={hasProcessed}
             isLoading={isLoading}
             uploadError={uploadError}
           />

@@ -1,11 +1,25 @@
 import React, { useRef, useState } from 'react';
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, ArrowRight, Database } from 'lucide-react';
+import { FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, PlayCircle, Database, Sparkles } from 'lucide-react';
 
-export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadBukuBank, onGoToResult, isLoading, uploadError }) {
+export default function UploadSection({
+  qlData,
+  bbData,
+  bwData,
+  onUploadQlola,
+  onUploadBukuBank,
+  onUploadBlokWanita,
+  onProcess,
+  canProcess,
+  hasProcessed,
+  isLoading,
+  uploadError,
+}) {
   const qlRef = useRef(null);
   const bbRef = useRef(null);
+  const bwRef = useRef(null);
   const [qlFileName, setQlFileName] = useState('');
   const [bbFileName, setBbFileName] = useState('');
+  const [bwFileName, setBwFileName] = useState('');
 
   const handleQlChange = (e) => {
     const file = e.target.files?.[0];
@@ -23,10 +37,16 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
     e.target.value = '';
   };
 
-  const bothLoaded = qlData.length > 0 && bbData.length > 0;
+  const handleBwChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBwFileName(file.name);
+    onUploadBlokWanita(file);
+    e.target.value = '';
+  };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
       {/* Instruction Card */}
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 text-sm text-blue-900">
         <div className="font-bold text-base mb-2 flex items-center gap-2">
@@ -36,8 +56,8 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
         <ol className="list-decimal list-inside space-y-1.5 text-blue-800 text-xs">
           <li>Upload file <strong>DataQlola</strong> (kolom J = Deskripsi, kolom M = Nominal/MUTASI_KREDIT)</li>
           <li>Upload file <strong>Buku Bank</strong> (kolom C = Deskripsi, kolom E = Nama Penerima, kolom F = Nominal)</li>
-          <li>Sistem otomatis mencocokkan: transaksi yang deskripsi <em>dan</em> nominal-nya sama persis</li>
-          <li>Lihat hasil di tab <strong>"Hasil Matching"</strong>, <strong>"Perlu Review"</strong>, dan <strong>"Belum Diambil"</strong></li>
+          <li>Opsional: upload file <strong>Blok Wanita</strong> untuk mengecek apakah transaksi tercatat pada rekap penarikan tunai</li>
+          <li>Klik <strong>Proses Rekonsiliasi</strong>, lalu lihat hasil di tab <strong>Semua</strong>, <strong>Cocok</strong>, <strong>Perlu Review</strong>, dan <strong>Belum Diambil</strong></li>
         </ol>
       </div>
 
@@ -49,7 +69,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
         </div>
       )}
 
-      {/* Upload Cards */}
+      {/* Upload Cards — wajib */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* DataQlola */}
         <input ref={qlRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleQlChange} />
@@ -65,7 +85,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
               <div className="text-center">
                 <div className="font-bold text-emerald-700 text-sm">DataQlola Termuat</div>
-                <div className="text-xs text-slate-500 mt-1 max-w-[160px] truncate">{qlFileName}</div>
+                <div className="text-xs text-slate-500 mt-1 max-w-[180px] truncate">{qlFileName}</div>
                 <div className="text-xs text-emerald-600 font-semibold mt-1">{qlData.length.toLocaleString('id-ID')} transaksi</div>
               </div>
               <div className="text-[11px] text-blue-500 group-hover:text-blue-700">Klik untuk ganti file</div>
@@ -99,7 +119,7 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
               <CheckCircle2 className="w-10 h-10 text-emerald-500" />
               <div className="text-center">
                 <div className="font-bold text-emerald-700 text-sm">Buku Bank Termuat</div>
-                <div className="text-xs text-slate-500 mt-1 max-w-[160px] truncate">{bbFileName}</div>
+                <div className="text-xs text-slate-500 mt-1 max-w-[180px] truncate">{bbFileName}</div>
                 <div className="text-xs text-emerald-600 font-semibold mt-1">{bbData.length.toLocaleString('id-ID')} transaksi</div>
               </div>
               <div className="text-[11px] text-indigo-500 group-hover:text-indigo-700">Klik untuk ganti file</div>
@@ -120,17 +140,63 @@ export default function UploadSection({ qlData, bbData, onUploadQlola, onUploadB
         </button>
       </div>
 
-      {/* CTA Lihat Hasil */}
-      {bothLoaded && (
+      {/* Upload Card — opsional: Blok Wanita */}
+      <input ref={bwRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleBwChange} />
+      <button
+        type="button"
+        onClick={() => bwRef.current?.click()}
+        disabled={isLoading}
+        className="group relative w-full flex items-center gap-4 p-4 rounded-2xl border-2 border-dashed transition-all
+          border-violet-300 hover:border-violet-500 hover:bg-violet-50 bg-white text-left"
+      >
+        <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center transition-colors ${
+          bwData.length > 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-violet-100 text-violet-600 group-hover:bg-violet-200'
+        }`}>
+          {bwData.length > 0 ? <CheckCircle2 className="w-6 h-6" /> : <Sparkles className="w-6 h-6" />}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-sm text-slate-800">
+              {bwData.length > 0 ? 'Blok Wanita Termuat' : 'Upload Blok Wanita'}
+            </span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 uppercase tracking-wide">
+              Opsional
+            </span>
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5 truncate">
+            {bwData.length > 0
+              ? `${bwFileName} · ${bwData.length.toLocaleString('id-ID')} baris — klik untuk ganti file`
+              : 'Rekap Penarikan Tunai Blok Wanita — kolom B (Deskripsi) · kolom D (Nominal)'}
+          </div>
+        </div>
+
+        {isLoading && <Loader2 className="w-4 h-4 text-violet-500 animate-spin shrink-0" />}
+      </button>
+
+      {/* Tombol Proses */}
+      <div className="space-y-2">
         <button
           type="button"
-          onClick={onGoToResult}
-          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md shadow-blue-500/20 active:scale-98 transition-all"
+          onClick={onProcess}
+          disabled={!canProcess || isLoading}
+          className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all ${
+            canProcess && !isLoading
+              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20 active:scale-[0.99]'
+              : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+          }`}
         >
-          Lihat Hasil Rekonsiliasi
-          <ArrowRight className="w-4 h-4" />
+          <PlayCircle className="w-4 h-4" />
+          {hasProcessed ? 'Proses Ulang Rekonsiliasi' : 'Proses Rekonsiliasi'}
         </button>
-      )}
+        <p className="text-center text-[11px] text-slate-400">
+          {!canProcess
+            ? 'Upload DataQlola dan Buku Bank terlebih dahulu untuk mengaktifkan tombol proses.'
+            : bwData.length > 0
+              ? 'QLola akan dicocokkan dengan Buku Bank, lalu dicek juga ke data Blok Wanita.'
+              : 'QLola akan dicocokkan dengan Buku Bank saja. Upload Blok Wanita bila ingin pengecekan tambahan.'}
+        </p>
+      </div>
     </div>
   );
 }

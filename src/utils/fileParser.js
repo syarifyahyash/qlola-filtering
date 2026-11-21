@@ -138,3 +138,68 @@ export async function parseDataQlola(fileArrayBuffer) {
       };
     });
 }
+
+/**
+ * Parse file Rekap Penarikan Tunai Blok Wanita dari Excel atau CSV.
+ *
+ * Struktur file:
+ *  - Judul laporan di atas
+ *  - Baris header: No | Bukti Pengiriman | Tanggal Penarikan Tunai | Nominal | Admin 5% | Total Penerimaan Tunai
+ *  - Baris data transaksi, diakhiri baris "Total"
+ *
+ * Kolom yang dipakai:
+ *  - Bukti Pengiriman (kolom B) -> deskripsi transaksi
+ *  - Nominal (kolom D) -> nominal
+ *  - Tanggal Penarikan Tunai (kolom C) -> informasi tambahan
+ */
+export async function parseBlokWanita(fileArrayBuffer) {
+  const XLSX = await loadXLSX();
+  const workbook = XLSX.read(new Uint8Array(fileArrayBuffer), { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  // Cari baris header kolom secara dinamis
+  let headerIdx = rows.findIndex(row => {
+    const rowStr = row.map(c => String(c).toLowerCase()).join(' ');
+    return (rowStr.includes('bukti pengiriman') || rowStr.includes('deskripsi')) &&
+           rowStr.includes('nominal');
+  });
+
+  if (headerIdx === -1) {
+    headerIdx = 2; // Default baris ke-3 (index 2)
+  }
+
+  const headerRow = rows[headerIdx] || [];
+
+  let deskCol = headerRow.findIndex(c => /bukti pengiriman|deskripsi/i.test(String(c)));
+  let nomCol = headerRow.findIndex(c => /^nominal$/i.test(String(c).trim()));
+  let tglCol = headerRow.findIndex(c => /tanggal penarikan/i.test(String(c)));
+
+  if (deskCol === -1) deskCol = 1;
+  if (nomCol === -1) nomCol = 3;
+  if (tglCol === -1) tglCol = 2;
+
+  const dataRows = rows.slice(headerIdx + 1);
+
+  return dataRows
+    .filter(row => {
+      const deskripsi = String(row[deskCol] || '').trim();
+      const rawNom = row[nomCol];
+      const nominal = typeof rawNom === 'number' ? rawNom : Number(String(rawNom || '').replace(/[^0-9.-]/g, '')) || 0;
+      const isTotalRow = String(row[0] || '').toUpperCase().includes('TOTAL') || deskripsi.toUpperCase().includes('TOTAL');
+      return deskripsi.length > 0 && nominal > 0 && !isTotalRow;
+    })
+    .map((row, idx) => {
+      const rawNom = row[nomCol];
+      const nominal = typeof rawNom === 'number' ? rawNom : Number(String(rawNom || '').replace(/[^0-9.-]/g, '')) || 0;
+      return {
+        _index: idx,
+        _rowIndex: headerIdx + 2 + idx,
+        // Rapikan tab/newline agar enak ditampilkan & dicocokkan
+        deskripsi: String(row[deskCol] || '').replace(/\s+/g, ' ').trim(),
+        nominal,
+        tanggalPenarikan: String(row[tglCol] || '').trim(),
+      };
+    });
+}

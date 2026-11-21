@@ -24,15 +24,66 @@ const STATUS_CONFIG = {
   },
 };
 
-function StatusBadge({ status }) {
+const SOURCE_LABELS = {
+  BUKU_BANK: 'Buku Bank',
+  BLOK_WANITA: 'Blok Wanita',
+  KEDUANYA: 'Buku Bank + Blok Wanita',
+};
+
+const SOURCE_STYLE = {
+  BUKU_BANK: {
+    label: 'Buku Bank',
+    badge: 'bg-sky-50 text-sky-700 border-sky-200',
+  },
+  BLOK_WANITA: {
+    label: 'Blok Wanita',
+    badge: 'bg-violet-50 text-violet-700 border-violet-200',
+  },
+  KEDUANYA: {
+    label: 'Keduanya',
+    badge: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  },
+};
+
+function StatusBadge({ status, source }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.BELUM_DIAMBIL;
+  const src = SOURCE_STYLE[source];
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.badge}`}>
-      {cfg.icon}
-      {cfg.label}
-    </span>
+    <div className="flex flex-col items-center gap-1">
+      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.badge}`}>
+        {cfg.icon}
+        {cfg.label}
+      </span>
+      {src && (
+        <span
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold leading-tight whitespace-nowrap ${src.badge}`}
+          title={`Sumber data: ${SOURCE_LABELS[source] || source}`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+          {src.label}
+        </span>
+      )}
+    </div>
   );
 }
+
+const BW_CONFIG = {
+  TERCATAT: {
+    label: 'Tercatat',
+    badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    icon: <CheckCircle2 className="w-3 h-3" />,
+  },
+  NOMINAL_BEDA: {
+    label: 'Nominal Beda',
+    badge: 'bg-amber-50 text-amber-700 border-amber-300',
+    icon: <AlertTriangle className="w-3 h-3" />,
+  },
+  TIDAK_TERCATAT: {
+    label: 'Tidak Tercatat',
+    badge: 'bg-slate-50 text-slate-500 border-slate-200',
+    icon: <Clock className="w-3 h-3" />,
+  },
+};
 
 function ReconciliationTable({ results, activeFilter }) {
   const [search, setSearch] = useState('');
@@ -50,7 +101,10 @@ function ReconciliationTable({ results, activeFilter }) {
         row.deskripsi,
         row.namaPenerima,
         String(row.nominal),
+        row.matchSource ? (SOURCE_LABELS[row.matchSource] || '') : '',
         formatRowDateTime(row.tanggal || row.qlRow?.tanggal, row.jamTran || row.qlRow?.jamTran),
+        row.blokWanita?.tanggalPenarikan || '',
+        ...(row.blokWanita?.matches || []).map(m => `${m.nominal} ${m.tanggalPenarikan}`),
       ].join('\n').toLowerCase(),
     })),
     [results],
@@ -134,7 +188,7 @@ function ReconciliationTable({ results, activeFilter }) {
                 <th className="py-3 px-3 min-w-[260px]">Deskripsi QLola</th>
                 <th className="py-3 px-3 min-w-[120px] text-right">Nominal</th>
                 <th className="py-3 px-3 min-w-[200px]">Nama Penerima</th>
-                <th className="py-3 px-3 w-32 text-center">Status</th>
+                <th className="py-3 px-3 w-40 text-center">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -190,7 +244,7 @@ function ReconciliationTable({ results, activeFilter }) {
                         {/* Status */}
                         <td className="py-3 px-3 text-center">
                           <div className="flex items-center justify-center gap-1">
-                            <StatusBadge status={item.status} />
+                            <StatusBadge status={item.status} source={item.matchSource} />
                             {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
                           </div>
                         </td>
@@ -217,6 +271,36 @@ function ReconciliationTable({ results, activeFilter }) {
                                       <div className="text-slate-500 text-[11px]">Voucher: {bb.nomorVoucher}</div>
                                     </div>
                                   ))}
+                                </div>
+                              )}
+                              {item.blokWanita && (
+                                <div>
+                                  <span className="text-slate-400 block mb-1">Pengecekan Blok Wanita:</span>
+                                  <div className="bg-white rounded-xl border border-slate-200 p-2.5 mb-1.5">
+                                    <div className={`font-semibold ${
+                                      item.blokWanita.status === 'TERCATAT'
+                                        ? 'text-emerald-700'
+                                        : item.blokWanita.status === 'NOMINAL_BEDA'
+                                          ? 'text-amber-700'
+                                          : 'text-slate-500'
+                                    }`}>
+                                      {BW_CONFIG[item.blokWanita.status]?.label || '-'}
+                                      {item.blokWanita.tanggalPenarikan ? ` · ${item.blokWanita.tanggalPenarikan}` : ''}
+                                    </div>
+                                    {item.blokWanita.matches?.length > 0 ? (
+                                      item.blokWanita.matches.map((m, mi) => (
+                                        <div key={mi} className="text-[11px] text-slate-500 mt-1">
+                                          <span className="font-mono font-semibold text-slate-700">{formatRupiah(m.nominal)}</span>
+                                          {m.tanggalPenarikan ? ` · ${m.tanggalPenarikan}` : ''}
+                                          <div className="font-mono truncate" title={m.deskripsi}>{m.deskripsi}</div>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div className="text-[11px] text-slate-500 mt-1">
+                                        Transaksi ini tidak ditemukan pada rekap penarikan Blok Wanita.
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>

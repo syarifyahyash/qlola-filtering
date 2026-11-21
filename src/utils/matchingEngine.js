@@ -19,6 +19,11 @@ import { formatRupiah } from './normalizer';
  *    - >1 kecocokan di mana total nominalnya sama persis dengan QLola -> MATCHED (Transaksi Dibagi)
  *    - >1 kecocokan di mana total nominalnya tidak sama -> PERLU_REVIEW
  *    - Tidak ditemukan kecocokan sama sekali -> BELUM_DIAMBIL
+ * 5. Pengecekan Blok Wanita (opsional):
+ *    - BELUM_DIAMBIL di Buku Bank tetapi tercatat di Blok Wanita dengan nominal sama
+ *      -> dianggap MATCHED (Cocok), sumber = BLOK_WANITA.
+ *    - Setiap hasil menyimpan `matchSource` (BUKU_BANK / BLOK_WANITA / KEDUANYA)
+ *      agar asal kecocokan bisa ditampilkan langsung di kolom Status.
  *
  * CATATAN PERFORMA:
  * Proses untuk ribuan transaksi bisa memakan waktu beberapa detik. Karena itu
@@ -171,6 +176,7 @@ function reconcileRow(qlRow, idx, preparedBB) {
       bbMatches: [],
       status: 'BELUM_DIAMBIL',
       statusLabel: 'Belum Diambil',
+      matchSource: null,
       namaPenerima: '-',
       nominal: qlNom,
       deskripsi: qlDesc,
@@ -189,6 +195,7 @@ function reconcileRow(qlRow, idx, preparedBB) {
         bbMatches: matches,
         status: 'MATCHED',
         statusLabel: 'Cocok',
+        matchSource: 'BUKU_BANK',
         namaPenerima: matched.namaPenerima || '(Nama kosong di Buku Bank)',
         nominal: qlNom,
         deskripsi: qlDesc,
@@ -204,6 +211,7 @@ function reconcileRow(qlRow, idx, preparedBB) {
       bbMatches: matches,
       status: 'PERLU_REVIEW',
       statusLabel: 'Perlu Review',
+      matchSource: 'BUKU_BANK',
       namaPenerima: `${matched.namaPenerima} (Nominal BB: ${formatRupiah(matched.nominal)})`,
       nominal: qlNom,
       deskripsi: qlDesc,
@@ -227,6 +235,7 @@ function reconcileRow(qlRow, idx, preparedBB) {
       bbMatches: matches,
       status: 'MATCHED',
       statusLabel: 'Cocok (Dibagi)',
+      matchSource: 'BUKU_BANK',
       namaPenerima: penerimaList,
       nominal: qlNom,
       deskripsi: qlDesc,
@@ -242,6 +251,7 @@ function reconcileRow(qlRow, idx, preparedBB) {
     bbMatches: matches,
     status: 'PERLU_REVIEW',
     statusLabel: 'Perlu Review',
+    matchSource: 'BUKU_BANK',
     namaPenerima: matches.map(m => `${m.namaPenerima} (${formatRupiah(m.nominal)})`).join(' | '),
     nominal: qlNom,
     deskripsi: qlDesc,
@@ -249,12 +259,53 @@ function reconcileRow(qlRow, idx, preparedBB) {
 }
 
 /**
+ * Siapkan entri Blok Wanita (opsional) untuk pengecekan kedua.
+ * Deskripsi Blok Wanita sudah dirapikan saat parsing, jadi cukup normalisasi.
+ */
+function prepareBlokWanita(bwData) {
+  return bwData.map(b => ({
+    ...b,
+    normDesc: normalizeDesc(b.deskripsi),
+    coreRef: extractCoreRef(b.deskripsi),
+  }));
+}
+
+/**
+ * Cek satu baris hasil rekonsiliasi terhadap data Blok Wanita.
+ * Tidak mengubah status utama (Cocok/Review/Belum) — hanya informasi tambahan.
+ */
+function checkBlokWanitaRow(result, preparedBW) {
+  const qlNorm = normalizeDesc(result.deskripsi);
+  const qlRef = extractCoreRef(result.deskripsi);
+
+  const matches = preparedBW.filter(b => isDescMatch(qlNorm, qlRef, b));
+
+  if (matches.length === 0) {
+    return { status: 'TIDAK_TERCATAT', matches: [], tanggalPenarikan: '' };
+  }
+
+  const sameNominal = matches.some(m => m.nominal === result.nominal);
+
+  return {
+    status: sameNominal ? 'TERCATAT' : 'NOMINAL_BEDA',
+    matches: matches.map(m => ({
+      _index: m._index,
+      tanggalPenarikan: m.tanggalPenarikan,
+      nominal: m.nominal,
+      deskripsi: m.deskripsi,
+    })),
+    tanggalPenarikan: matches[0].tanggalPenarikan || '',
+  };
+}
+
+/**
  * Jalankan proses rekonsiliasi secara sinkron.
  * @param {Array} qlData - Hasil parseDataQlola()
  * @param {Array} bbData - Hasil parseBukuBank()
+ * @param {Array} [bwData] - Hasil parseBlokWanita() (opsional)
  * @returns {{ results: Array, summary: Object }}
  */
-export function reconcile(qlData, bbData) {
+export function reconcile(qlData, bbData, bwData) {
   if (!qlData?.length || !bbData?.length) {
     return {
       results: [],
@@ -264,10 +315,99 @@ export function reconcile(qlData, bbData) {
 
   const preparedBB = prepareBukuBank(bbData);
   const results = qlData.map((qlRow, idx) => reconcileRow(qlRow, idx, preparedBB));
+  const bwSummary = applyBlokWanita(results, bwData);
 
   return {
     results,
-    summary: buildSummary(results),
+    summary: buildSummary(results, bwSummary),
+  };
+}
+
+/**
+ * Tentukan status akhir setelah pengecekan Blok Wanita.
+ *
+ * Aturan:
+ *  - Cocok di Buku Bank (status MATCHED) tetap Cocok, sumbernya ditandai
+ *    Buku Bank (atau "keduanya" bila juga tercatat di Blok Wanita).
+ *  - Belum ada di Buku Bank tapi tercatat di Blok Wanita (nominal sama)
+ *    -> dianggap COCOK dengan sumber Blok Wanita.
+ *  - Belum ada di Buku Bank tapi ada di Blok Wanita dengan nominal berbeda
+ *    -> PERLU_REVIEW.
+ */
+function classifyWithBlokWanita(result) {
+  const check = result.blokWanita;
+  if (!check) return;
+
+  const bwTercatat = check.status === 'TERCATAT';
+  const bbMatched = result.status === 'MATCHED';
+
+  if (bbMatched) {
+    result.matchSource = bwTercatat ? 'KEDUANYA' : 'BUKU_BANK';
+    return;
+  }
+
+  if (result.status !== 'BELUM_DIAMBIL') return;
+
+  if (bwTercatat) {
+    result.status = 'MATCHED';
+    result.statusLabel = 'Cocok';
+    result.matchSource = 'BLOK_WANITA';
+    result.namaPenerima = 'Tercatat di Blok Wanita';
+    return;
+  }
+
+  if (check.status === 'NOMINAL_BEDA') {
+    const bwNominal = check.matches[0]?.nominal;
+    result.status = 'PERLU_REVIEW';
+    result.statusLabel = 'Perlu Review';
+    result.matchSource = 'BLOK_WANITA';
+    result.namaPenerima = `Blok Wanita (Nominal BW: ${formatRupiah(bwNominal)})`;
+  }
+}
+
+/**
+ * Terapkan pengecekan Blok Wanita ke seluruh hasil rekonsiliasi.
+ * @returns {Object|null} meta ringkasan Blok Wanita
+ */
+function applyBlokWanita(results, bwData) {
+  if (!bwData?.length) return null;
+
+  const preparedBW = prepareBlokWanita(bwData);
+  const linked = new Set();
+  let tercatat = 0;
+  let nominalBeda = 0;
+  let tidakTercatat = 0;
+  let tercatatNominal = 0;
+
+  for (const result of results) {
+    const check = checkBlokWanitaRow(result, preparedBW);
+    result.blokWanita = check;
+    classifyWithBlokWanita(result);
+
+    if (check.status === 'TERCATAT') {
+      tercatat++;
+      tercatatNominal += result.nominal || 0;
+    } else if (check.status === 'NOMINAL_BEDA') {
+      nominalBeda++;
+    } else {
+      tidakTercatat++;
+    }
+
+    for (const m of check.matches) linked.add(m._index);
+  }
+
+  const totalNominal = bwData.reduce((s, b) => s + (b.nominal || 0), 0);
+
+  return {
+    checked: true,
+    totalRows: bwData.length,
+    totalNominal,
+    tercatat,
+    nominalBeda,
+    tidakTercatat,
+    tercatatNominal,
+    linkedRows: linked.size,
+    unlinkedRows: bwData.length - linked.size,
   };
 }
 
@@ -278,10 +418,14 @@ export function reconcile(qlData, bbData) {
  *
  * @param {Array} qlData - Hasil parseDataQlola()
  * @param {Array} bbData - Hasil parseBukuBank()
- * @param {{ onProgress?: (percent: number, processed: number, total: number) => void, signal?: AbortSignal }} options
+ * @param {{
+ *   onProgress?: (percent: number, processed: number, total: number, phase?: 'matching'|'blok-wanita') => void,
+ *   signal?: AbortSignal,
+ *   blokWanita?: Array,
+ * }} options
  * @returns {Promise<{ results: Array, summary: Object }>}
  */
-export async function reconcileAsync(qlData, bbData, { onProgress, signal } = {}) {
+export async function reconcileAsync(qlData, bbData, { onProgress, signal, blokWanita } = {}) {
   if (!qlData?.length || !bbData?.length) {
     return {
       results: [],
@@ -293,8 +437,11 @@ export async function reconcileAsync(qlData, bbData, { onProgress, signal } = {}
   const total = qlData.length;
   const results = new Array(total);
   const yielder = createYield();
+  const hasBW = Boolean(blokWanita?.length);
+  // Pencocokan utama memakai 0-80% dari progres bila ada pengecekan Blok Wanita.
+  const mainScale = hasBW ? 0.8 : 1;
 
-  onProgress?.(0, 0, total);
+  onProgress?.(0, 0, total, 'matching');
 
   try {
     let lastYield = now();
@@ -309,24 +456,76 @@ export async function reconcileAsync(qlData, bbData, { onProgress, signal } = {}
 
       const isLast = i === total - 1;
       if (isLast || now() - lastYield >= MAX_WORK_MS) {
-        onProgress?.(Math.round(((i + 1) / total) * 100), i + 1, total);
+        onProgress?.(Math.round(((i + 1) / total) * 100 * mainScale), i + 1, total, 'matching');
 
         // Beri kesempatan browser melukis ulang UI / memproses input
         await yielder.yieldToUi();
         lastYield = now();
       }
     }
+
+    let bwSummary = null;
+    if (hasBW) {
+      const preparedBW = prepareBlokWanita(blokWanita);
+      const linked = new Set();
+      let tercatat = 0;
+      let nominalBeda = 0;
+      let tidakTercatat = 0;
+      let tercatatNominal = 0;
+      lastYield = now();
+
+      for (let i = 0; i < total; i++) {
+        if (signal?.aborted) {
+          const err = new Error('Pengecekan Blok Wanita dibatalkan');
+          err.name = 'AbortError';
+          throw err;
+        }
+
+        const check = checkBlokWanitaRow(results[i], preparedBW);
+        results[i].blokWanita = check;
+        classifyWithBlokWanita(results[i]);
+
+        if (check.status === 'TERCATAT') {
+          tercatat++;
+          tercatatNominal += results[i].nominal || 0;
+        } else if (check.status === 'NOMINAL_BEDA') {
+          nominalBeda++;
+        } else {
+          tidakTercatat++;
+        }
+
+        for (const m of check.matches) linked.add(m._index);
+
+        if (i === total - 1 || now() - lastYield >= MAX_WORK_MS) {
+          onProgress?.(Math.round(80 + ((i + 1) / total) * 20), i + 1, total, 'blok-wanita');
+          await yielder.yieldToUi();
+          lastYield = now();
+        }
+      }
+
+      bwSummary = {
+        checked: true,
+        totalRows: blokWanita.length,
+        totalNominal: blokWanita.reduce((s, b) => s + (b.nominal || 0), 0),
+        tercatat,
+        nominalBeda,
+        tidakTercatat,
+        tercatatNominal,
+        linkedRows: linked.size,
+        unlinkedRows: blokWanita.length - linked.size,
+      };
+    }
+
+    return {
+      results,
+      summary: buildSummary(results, bwSummary),
+    };
   } finally {
     yielder.dispose();
   }
-
-  return {
-    results,
-    summary: buildSummary(results),
-  };
 }
 
-function buildSummary(results) {
+function buildSummary(results, blokWanita = null) {
   let matchedCount = 0;
   let reviewCount = 0;
   let unmatchedCount = 0;
@@ -363,5 +562,6 @@ function buildSummary(results) {
     reviewNominal,
     unmatchedNominal,
     matchPercentage: matchPct,
+    blokWanita,
   };
 }
